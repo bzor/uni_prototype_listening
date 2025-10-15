@@ -1,0 +1,15 @@
+{
+  "name": "gemini-live-audio-analyzer",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "deploy": "vite build && touch dist/.nojekyll"
+  },
+  "devDependencies": {
+    "vite": "^5.0.0"
+  }
+}
+
