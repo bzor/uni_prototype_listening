@@ -51,7 +51,7 @@ h2 {
 
 label {
   font-size: 0.8rem;
-  color: ##fff;
+  color: #fff;
 }
 
 input[type="password"] {
@@ -152,7 +152,7 @@ a {
   background: #0a0a0a;
   border: 1px solid #404040;
   font-family: 'Monaco', 'Menlo', 'Courier New', monospace;
-  font-size: 0.75rem;
+  font-size: 0.6rem;
   color: #ccc;
   overflow-y: auto;
   line-height: 1.4;
@@ -174,5 +174,21 @@ a {
 
 .transcript-log::-webkit-scrollbar-thumb:hover {
   background: #505050;
+}
+
+.log-entry {
+  margin-bottom: 1rem;
+}
+
+.log-timestamp {
+  color: #666666;
+}
+
+.log-transcript {
+  color: #ccc;
+}
+
+.log-analysis {
+  color: #00ffff;
 }
 

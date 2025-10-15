@@ -384,7 +384,9 @@ function handleGeminiResponse(data) {
             accumulatedText.length > 20 && 
             !lowerText.includes("i'm ready") && 
             !lowerText.includes("please provide") &&
-            !lowerText.includes("waiting for");
+            !lowerText.includes("waiting for") &&
+            !lowerText.includes("ready when you are") &&
+            !lowerText.includes("send the audio");
           
           if (isActualAnalysis) {
             // Extract transcript from response
@@ -401,9 +403,9 @@ function handleGeminiResponse(data) {
             console.log('[RESPONSE] Extracted emoji:', emoji);
             console.log('[RESPONSE] Full response text:', accumulatedText);
             
-            // Add to transcript log
+            // Add to transcript log with analysis
             if (transcript) {
-              addToTranscriptLog(transcript);
+              addToTranscriptLog(transcript, analysis);
             }
             
             // Update UI with analysis only (not transcript)
@@ -478,20 +480,42 @@ function extractEmoji(text) {
   return '💬';
 }
 
-function addToTranscriptLog(text) {
+function addToTranscriptLog(transcript, analysis) {
   const timestamp = new Date().toLocaleTimeString();
-  const entry = `[${timestamp}] ${text}`;
+  
+  // Create entry element
+  const entryDiv = document.createElement('div');
+  entryDiv.className = 'log-entry';
+  
+  const timestampSpan = document.createElement('div');
+  timestampSpan.className = 'log-timestamp';
+  timestampSpan.textContent = `[${timestamp}]`;
+  
+  const transcriptSpan = document.createElement('div');
+  transcriptSpan.className = 'log-transcript';
+  transcriptSpan.textContent = `> ${transcript}`;
+  
+  const analysisSpan = document.createElement('div');
+  analysisSpan.className = 'log-analysis';
+  analysisSpan.textContent = `  ${analysis}`;
+  
+  entryDiv.appendChild(timestampSpan);
+  entryDiv.appendChild(transcriptSpan);
+  entryDiv.appendChild(analysisSpan);
   
   // Add to history
-  transcriptHistory.push(entry);
+  transcriptHistory.push(entryDiv);
   
   // Cap at MAX_TRANSCRIPT_ENTRIES
   if (transcriptHistory.length > MAX_TRANSCRIPT_ENTRIES) {
-    transcriptHistory.shift();
+    const removed = transcriptHistory.shift();
+    if (removed && removed.parentNode) {
+      removed.parentNode.removeChild(removed);
+    }
   }
   
-  // Update display
-  transcriptLog.textContent = transcriptHistory.join('\n');
+  // Add to display
+  transcriptLog.appendChild(entryDiv);
   
   // Auto-scroll to bottom
   transcriptLog.scrollTop = transcriptLog.scrollHeight;
@@ -547,7 +571,7 @@ function disconnect() {
   emojiDisplay.textContent = '🎤';
   descriptionDiv.textContent = 'Waiting for connection...';
   updateStatus('');
-  transcriptLog.textContent = '';
+  transcriptLog.innerHTML = '';
 }
 
 function updateUI(connected) {
