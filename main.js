@@ -12,13 +12,15 @@ let isProcessing = false;
 let setupComplete = false;
 let hasSpeech = false;
 let accumulatedText = '';
+let transcriptHistory = [];
 
 // Config
 const SAMPLE_RATE = 16000;
 const SILENCE_THRESHOLD = 0.01;
-const SILENCE_DURATION = 2000;
+const SILENCE_DURATION = 1500;
 const MAX_UTTERANCE_DURATION = 15000;
 const MODEL = 'gemini-2.0-flash-exp';
+const MAX_TRANSCRIPT_ENTRIES = 200;
 
 // DOM elements
 const apiKeyInput = document.getElementById('apiKey');
@@ -27,6 +29,7 @@ const disconnectBtn = document.getElementById('disconnectBtn');
 const statusDiv = document.getElementById('status');
 const emojiDisplay = document.getElementById('emojiDisplay');
 const descriptionDiv = document.getElementById('description');
+const transcriptLog = document.getElementById('transcriptLog');
 
 // Event listeners
 connectBtn.addEventListener('click', connect);
@@ -304,7 +307,7 @@ function sendAudioForAnalysis() {
         turns: [{
           role: 'user',
           parts: [{
-            text: 'Analyze the audio I just sent. Describe the tone and content of the speech in 1-2 concise sentences. Then on a new line, add "Emoji: " followed by a SINGLE emoji that best represents the emotion, tone, or sentiment of the speech.'
+            text: 'First, transcribe what was said in the audio I just sent. Then analyze the tone and content in 1-2 concise sentences. Format your response as:\n\nTranscript: [what you heard]\n\nAnalysis: [tone and content description]\n\nEmoji: [single emoji that best represents the emotion/tone/sentiment]'
           }]
         }],
         turnComplete: true
@@ -384,17 +387,28 @@ function handleGeminiResponse(data) {
             !lowerText.includes("waiting for");
           
           if (isActualAnalysis) {
+            // Extract transcript from response
+            const transcript = extractTranscript(accumulatedText);
+            
+            // Extract analysis from response
+            const analysis = extractAnalysis(accumulatedText);
+            
             // Extract emoji from response
             const emoji = extractEmoji(accumulatedText);
             
+            console.log('[RESPONSE] Extracted transcript:', transcript);
+            console.log('[RESPONSE] Extracted analysis:', analysis);
             console.log('[RESPONSE] Extracted emoji:', emoji);
+            console.log('[RESPONSE] Full response text:', accumulatedText);
             
-            // Remove emoji line from description
-            const description = accumulatedText.replace(/Emoji:\s*.*/i, '').trim();
+            // Add to transcript log
+            if (transcript) {
+              addToTranscriptLog(transcript);
+            }
             
-            // Update UI with complete response
+            // Update UI with analysis only (not transcript)
             emojiDisplay.textContent = emoji;
-            descriptionDiv.textContent = description;
+            descriptionDiv.textContent = analysis || 'Analysis not available';
             
             // Reset for next turn
             accumulatedText = '';
@@ -420,6 +434,27 @@ function handleGeminiResponse(data) {
   }
 }
 
+function extractTranscript(text) {
+  // Try to extract transcript from "Transcript: X" pattern
+  const transcriptMatch = text.match(/Transcript:\s*(.+?)(?:\n|Analysis:|Emoji:|$)/is);
+  if (transcriptMatch && transcriptMatch[1]) {
+    return transcriptMatch[1].trim();
+  }
+  return null;
+}
+
+function extractAnalysis(text) {
+  // Try to extract analysis from "Analysis: X" pattern
+  const analysisMatch = text.match(/Analysis:\s*(.+?)(?:\n\s*Emoji:|$)/is);
+  if (analysisMatch && analysisMatch[1]) {
+    return analysisMatch[1].trim();
+  }
+  // Fallback: if no Analysis: tag, return everything except Transcript and Emoji
+  return text.replace(/Transcript:.*?(?=Analysis:|Emoji:|$)/is, '')
+             .replace(/Emoji:\s*.*/i, '')
+             .trim();
+}
+
 function extractEmoji(text) {
   // Try to extract emoji from "Emoji: X" pattern
   // Look for the pattern and capture multiple characters to handle multi-codepoint emojis
@@ -441,6 +476,25 @@ function extractEmoji(text) {
   console.log('[EMOJI] No match found, using default');
   // Default fallback
   return '💬';
+}
+
+function addToTranscriptLog(text) {
+  const timestamp = new Date().toLocaleTimeString();
+  const entry = `[${timestamp}] ${text}`;
+  
+  // Add to history
+  transcriptHistory.push(entry);
+  
+  // Cap at MAX_TRANSCRIPT_ENTRIES
+  if (transcriptHistory.length > MAX_TRANSCRIPT_ENTRIES) {
+    transcriptHistory.shift();
+  }
+  
+  // Update display
+  transcriptLog.textContent = transcriptHistory.join('\n');
+  
+  // Auto-scroll to bottom
+  transcriptLog.scrollTop = transcriptLog.scrollHeight;
 }
 
 function disconnect() {
@@ -486,12 +540,14 @@ function disconnect() {
   hasSpeech = false;
   audioChunkCount = 0;
   accumulatedText = '';
+  transcriptHistory = [];
   
   // Reset UI
   updateUI(false);
   emojiDisplay.textContent = '🎤';
   descriptionDiv.textContent = 'Waiting for connection...';
   updateStatus('');
+  transcriptLog.textContent = '';
 }
 
 function updateUI(connected) {
