@@ -9,14 +9,13 @@
 <body>
   <div class="container">
     <div class="left-panel">
-      <h2>Controls</h2>
       <div class="control-group">
-        <label for="apiKey">Gemini API Key:</label>
+        <label for="apiKey">API Key: <a target="_blank" href="https://aistudio.google.com/app/api-keys">(Get your key here)</a></label>
         <input type="password" id="apiKey" placeholder="Enter your API key">
       </div>
       <div class="button-group">
-        <button id="connectBtn">Connect</button>
-        <button id="disconnectBtn" disabled>Disconnect</button>
+        <button id="connectBtn" class="btn-primary">Connect</button>
+        <button id="disconnectBtn" class="btn-secondary" disabled>Disconnect</button>
       </div>
       <div id="status" class="status"></div>
     </div>
