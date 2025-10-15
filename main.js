@@ -13,11 +13,16 @@ let setupComplete = false;
 let hasSpeech = false;
 let accumulatedText = '';
 let transcriptHistory = [];
+let speechStartTime = 0;
+let consecutiveSpeechFrames = 0;
+let consecutiveSilenceFrames = 0;
 
 // Config
 const SAMPLE_RATE = 16000;
-const SILENCE_THRESHOLD = 0.01;
-const SILENCE_DURATION = 1500;
+const SPEECH_THRESHOLD = 0.015; // Balanced threshold for detecting speech
+const SILENCE_THRESHOLD = 0.008; // Balanced threshold for confirming silence
+const SILENCE_DURATION = 1700;   // Balanced silence before triggering analysis
+const MIN_SPEECH_DURATION = 300; // Minimum speech duration to start recording
 const MAX_UTTERANCE_DURATION = 15000;
 const MODEL = 'gemini-2.0-flash-exp';
 const MAX_TRANSCRIPT_ENTRIES = 200;
@@ -34,6 +39,15 @@ const transcriptLog = document.getElementById('transcriptLog');
 // Event listeners
 connectBtn.addEventListener('click', connect);
 disconnectBtn.addEventListener('click', disconnect);
+
+// Load saved API key on page load
+window.addEventListener('DOMContentLoaded', () => {
+  const savedApiKey = localStorage.getItem('gemini_api_key');
+  if (savedApiKey) {
+    apiKeyInput.value = savedApiKey;
+    console.log('[STORAGE] Loaded saved API key');
+  }
+});
 
 async function connect() {
   const apiKey = apiKeyInput.value.trim();
@@ -151,22 +165,45 @@ function processAudioChunk(inputBuffer) {
   
   const inputData = inputBuffer.getChannelData(0);
   
-  // Voice activity detection
+  // Voice activity detection with hysteresis
   const rms = calculateRMS(inputData);
-  const isSpeaking = rms > SILENCE_THRESHOLD;
+  const isSpeaking = rms > SPEECH_THRESHOLD;
+  const isSilent = rms < SILENCE_THRESHOLD;
   
   if (audioChunkCount % 100 === 0) {
-    console.log('[VAD] RMS:', rms.toFixed(4), 'Threshold:', SILENCE_THRESHOLD, 'Speaking:', isSpeaking);
+    console.log('[VAD] RMS:', rms.toFixed(4), 'Speech threshold:', SPEECH_THRESHOLD, 'Speaking:', isSpeaking);
   }
   
+  // Track consecutive frames for debouncing
   if (isSpeaking) {
-    lastSoundTime = Date.now();
+    consecutiveSpeechFrames++;
+    consecutiveSilenceFrames = 0;
+  } else if (isSilent) {
+    consecutiveSilenceFrames++;
+    consecutiveSpeechFrames = 0;
+  } else {
+    // In between thresholds - maintain current state
+    consecutiveSpeechFrames = 0;
+    consecutiveSilenceFrames = 0;
+  }
+  
+  // Require sustained speech before we start recording (reduces false triggers)
+  const FRAMES_FOR_SPEECH_START = 2; // ~200ms of sustained speech
+  const FRAMES_FOR_SILENCE = 3;      // ~300ms of sustained silence
+  
+  if (consecutiveSpeechFrames >= FRAMES_FOR_SPEECH_START && !hasSpeech) {
+    // Start of speech detected
+    speechStartTime = Date.now();
+    hasSpeech = true;
+    console.log('[VAD] Sustained speech detected - starting to record');
     
-    // Mark that we've detected actual speech
-    if (!hasSpeech) {
-      hasSpeech = true;
-      console.log('[VAD] Speech detected - starting to record');
-    }
+    // Update display to show recording
+    emojiDisplay.textContent = '🔴';
+    descriptionDiv.textContent = 'Recording';
+  }
+  
+  if (hasSpeech) {
+    lastSoundTime = Date.now();
     
     // Convert Float32 to Int16 PCM and add to buffer
     const pcm16 = new Int16Array(inputData.length);
@@ -176,14 +213,19 @@ function processAudioChunk(inputBuffer) {
     }
     audioBuffer.push(pcm16);
     
-    // Clear silence timer
-    if (silenceTimer) {
-      clearTimeout(silenceTimer);
-      silenceTimer = null;
+    // If we're speaking, clear silence timer
+    if (isSpeaking) {
+      if (silenceTimer) {
+        clearTimeout(silenceTimer);
+        silenceTimer = null;
+      }
     }
     
-    // Start max duration timer if not started
-    if (!maxDurationTimer) {
+    // Check if we have enough speech duration
+    const speechDuration = Date.now() - speechStartTime;
+    
+    // Start max duration timer if not started and we have minimum speech
+    if (!maxDurationTimer && speechDuration > MIN_SPEECH_DURATION) {
       console.log('[VAD] Starting max duration timer');
       maxDurationTimer = setTimeout(() => {
         console.log('[VAD] Max duration reached, triggering analysis');
@@ -192,27 +234,16 @@ function processAudioChunk(inputBuffer) {
         }
       }, MAX_UTTERANCE_DURATION);
     }
-  } else {
-    // Only buffer and set silence timer if we've already detected speech
-    if (hasSpeech) {
-      // Continue buffering during silence to capture natural pauses
-      const pcm16 = new Int16Array(inputData.length);
-      for (let i = 0; i < inputData.length; i++) {
-        const s = Math.max(-1, Math.min(1, inputData[i]));
-        pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
-      }
-      audioBuffer.push(pcm16);
-      
-      // Start silence timer if not already running
-      if (!silenceTimer && !isProcessing) {
-        console.log('[VAD] Silence detected, starting silence timer');
-        silenceTimer = setTimeout(() => {
-          console.log('[VAD] Silence duration reached, triggering analysis');
-          if (!isProcessing && hasSpeech) {
-            sendAudioForAnalysis();
-          }
-        }, SILENCE_DURATION);
-      }
+    
+    // Start silence timer if we have sustained silence
+    if (consecutiveSilenceFrames >= FRAMES_FOR_SILENCE && !silenceTimer && !isProcessing && speechDuration > MIN_SPEECH_DURATION) {
+      console.log('[VAD] Sustained silence detected, starting silence timer');
+      silenceTimer = setTimeout(() => {
+        console.log('[VAD] Silence duration reached, triggering analysis');
+        if (!isProcessing && hasSpeech) {
+          sendAudioForAnalysis();
+        }
+      }, SILENCE_DURATION);
     }
   }
 }
@@ -269,6 +300,9 @@ function sendAudioForAnalysis() {
   // Clear buffer and reset speech flag
   audioBuffer = [];
   hasSpeech = false;
+  speechStartTime = 0;
+  consecutiveSpeechFrames = 0;
+  consecutiveSilenceFrames = 0;
   
   // Convert to base64 properly
   const bytes = new Uint8Array(fullAudio.buffer);
@@ -307,7 +341,7 @@ function sendAudioForAnalysis() {
         turns: [{
           role: 'user',
           parts: [{
-            text: 'First, transcribe what was said in the audio I just sent. Then analyze the tone and content in 1-2 concise sentences. Format your response as:\n\nTranscript: [what you heard]\n\nAnalysis: [tone and content description]\n\nEmoji: [single emoji that best represents the emotion/tone/sentiment]'
+            text: 'IMPORTANT: Respond ONLY with the analysis, do not ask questions or say you are ready.\n\nTranscribe what was said in the audio I just sent. Then analyze the tone and content in 1-2 concise sentences. Format your response EXACTLY as:\n\nTranscript: [what you heard]\n\nAnalysis: [tone and content description]\n\nEmoji: [single emoji that best represents the emotion/tone/sentiment]'
           }]
         }],
         turnComplete: true
@@ -336,6 +370,18 @@ function handleGeminiResponse(data) {
     if (response.setupComplete) {
       console.log('[RESPONSE] Setup completed successfully');
       setupComplete = true;
+      
+      // Save API key to localStorage on successful connection
+      const apiKey = apiKeyInput.value.trim();
+      if (apiKey) {
+        localStorage.setItem('gemini_api_key', apiKey);
+        console.log('[STORAGE] Saved API key to localStorage');
+      }
+      
+      // Update display to show ready for speech
+      emojiDisplay.textContent = '🎤';
+      descriptionDiv.textContent = 'Waiting for Speech';
+      
       return;
     }
     
@@ -418,8 +464,19 @@ function handleGeminiResponse(data) {
             updateStatus('Ready. Start speaking...');
           } else {
             console.log('[RESPONSE] Skipping non-analysis response:', accumulatedText);
-            // Keep processing state, don't reset yet
+            // Reset processing state immediately so we can continue
             accumulatedText = '';
+            isProcessing = false;
+            // Reset display to recording state if we still have speech
+            if (hasSpeech) {
+              emojiDisplay.textContent = '🔴';
+              descriptionDiv.textContent = 'Recording';
+              updateStatus('Recording...');
+            } else {
+              emojiDisplay.textContent = '🎤';
+              descriptionDiv.textContent = 'Waiting for Speech';
+              updateStatus('Ready. Start speaking...');
+            }
           }
         } else {
           // No text received, reset processing state
@@ -565,11 +622,14 @@ function disconnect() {
   audioChunkCount = 0;
   accumulatedText = '';
   transcriptHistory = [];
+  speechStartTime = 0;
+  consecutiveSpeechFrames = 0;
+  consecutiveSilenceFrames = 0;
   
   // Reset UI
   updateUI(false);
-  emojiDisplay.textContent = '🎤';
-  descriptionDiv.textContent = 'Waiting for connection...';
+  emojiDisplay.textContent = '🔌';
+  descriptionDiv.textContent = 'Waiting for Connection';
   updateStatus('');
   transcriptLog.innerHTML = '';
 }
