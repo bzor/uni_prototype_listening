@@ -4,26 +4,13 @@ let audioContext = null;
 let mediaStream = null;
 let audioProcessor = null;
 let isRecording = false;
-let audioBuffer = [];
-let silenceTimer = null;
-let maxDurationTimer = null;
-let lastSoundTime = 0;
-let isProcessing = false;
 let setupComplete = false;
-let hasSpeech = false;
 let accumulatedText = '';
 let transcriptHistory = [];
-let speechStartTime = 0;
-let consecutiveSpeechFrames = 0;
-let consecutiveSilenceFrames = 0;
+let currentTurnActive = false;
 
 // Config
 const SAMPLE_RATE = 16000;
-const SPEECH_THRESHOLD = 0.015; // Balanced threshold for detecting speech
-const SILENCE_THRESHOLD = 0.008; // Balanced threshold for confirming silence
-const SILENCE_DURATION = 1700;   // Balanced silence before triggering analysis
-const MIN_SPEECH_DURATION = 300; // Minimum speech duration to start recording
-const MAX_UTTERANCE_DURATION = 15000;
 const MODEL = 'gemini-2.0-flash-exp';
 const MAX_TRANSCRIPT_ENTRIES = 200;
 
@@ -69,12 +56,20 @@ async function connectToGemini(apiKey) {
       console.log('[WS] Connected to Gemini');
       updateStatus('Connected. Setting up...');
       
-      // Send setup message
+      // Send setup message with system instructions
       const setupMessage = {
         setup: {
           model: `models/${MODEL}`,
           generationConfig: {
-            responseModalities: ['TEXT']
+            responseModalities: ['TEXT'],
+            speechConfig: {
+              voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Puck' } }
+            }
+          },
+          systemInstruction: {
+            parts: [{
+              text: 'You are a real-time speech analyzer. When you hear audio input, immediately transcribe it and provide analysis. Format your response as:\n\nTranscript: [what was said]\n\nAnalysis: [brief tone and content analysis in 1-2 sentences]\n\nEmoji: [single emoji that represents the emotion/tone]\n\nDo not ask questions or say you are ready. Just analyze the audio you receive.'
+            }]
           }
         }
       };
@@ -156,158 +151,21 @@ async function startMicrophone() {
 let audioChunkCount = 0;
 
 function processAudioChunk(inputBuffer) {
-  if (!isRecording || isProcessing) return;
+  if (!isRecording || !setupComplete || !ws || ws.readyState !== WebSocket.OPEN) return;
   
   audioChunkCount++;
-  if (audioChunkCount % 100 === 0) {
-    console.log('[AUDIO] Processed', audioChunkCount, 'chunks, buffer size:', audioBuffer.length);
-  }
   
   const inputData = inputBuffer.getChannelData(0);
   
-  // Voice activity detection with hysteresis
-  const rms = calculateRMS(inputData);
-  const isSpeaking = rms > SPEECH_THRESHOLD;
-  const isSilent = rms < SILENCE_THRESHOLD;
-  
-  if (audioChunkCount % 100 === 0) {
-    console.log('[VAD] RMS:', rms.toFixed(4), 'Speech threshold:', SPEECH_THRESHOLD, 'Speaking:', isSpeaking);
+  // Convert Float32 to Int16 PCM
+  const pcm16 = new Int16Array(inputData.length);
+  for (let i = 0; i < inputData.length; i++) {
+    const s = Math.max(-1, Math.min(1, inputData[i]));
+    pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
   }
   
-  // Track consecutive frames for debouncing
-  if (isSpeaking) {
-    consecutiveSpeechFrames++;
-    consecutiveSilenceFrames = 0;
-  } else if (isSilent) {
-    consecutiveSilenceFrames++;
-    consecutiveSpeechFrames = 0;
-  } else {
-    // In between thresholds - maintain current state
-    consecutiveSpeechFrames = 0;
-    consecutiveSilenceFrames = 0;
-  }
-  
-  // Require sustained speech before we start recording (reduces false triggers)
-  const FRAMES_FOR_SPEECH_START = 2; // ~200ms of sustained speech
-  const FRAMES_FOR_SILENCE = 3;      // ~300ms of sustained silence
-  
-  if (consecutiveSpeechFrames >= FRAMES_FOR_SPEECH_START && !hasSpeech) {
-    // Start of speech detected
-    speechStartTime = Date.now();
-    hasSpeech = true;
-    console.log('[VAD] Sustained speech detected - starting to record');
-    
-    // Update display to show recording
-    emojiDisplay.textContent = '🔴';
-    descriptionDiv.textContent = 'Recording';
-  }
-  
-  if (hasSpeech) {
-    lastSoundTime = Date.now();
-    
-    // Convert Float32 to Int16 PCM and add to buffer
-    const pcm16 = new Int16Array(inputData.length);
-    for (let i = 0; i < inputData.length; i++) {
-      const s = Math.max(-1, Math.min(1, inputData[i]));
-      pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
-    }
-    audioBuffer.push(pcm16);
-    
-    // If we're speaking, clear silence timer
-    if (isSpeaking) {
-      if (silenceTimer) {
-        clearTimeout(silenceTimer);
-        silenceTimer = null;
-      }
-    }
-    
-    // Check if we have enough speech duration
-    const speechDuration = Date.now() - speechStartTime;
-    
-    // Start max duration timer if not started and we have minimum speech
-    if (!maxDurationTimer && speechDuration > MIN_SPEECH_DURATION) {
-      console.log('[VAD] Starting max duration timer');
-      maxDurationTimer = setTimeout(() => {
-        console.log('[VAD] Max duration reached, triggering analysis');
-        if (!isProcessing && hasSpeech) {
-          sendAudioForAnalysis();
-        }
-      }, MAX_UTTERANCE_DURATION);
-    }
-    
-    // Start silence timer if we have sustained silence
-    if (consecutiveSilenceFrames >= FRAMES_FOR_SILENCE && !silenceTimer && !isProcessing && speechDuration > MIN_SPEECH_DURATION) {
-      console.log('[VAD] Sustained silence detected, starting silence timer');
-      silenceTimer = setTimeout(() => {
-        console.log('[VAD] Silence duration reached, triggering analysis');
-        if (!isProcessing && hasSpeech) {
-          sendAudioForAnalysis();
-        }
-      }, SILENCE_DURATION);
-    }
-  }
-}
-
-function calculateRMS(samples) {
-  let sum = 0;
-  for (let i = 0; i < samples.length; i++) {
-    sum += samples[i] * samples[i];
-  }
-  return Math.sqrt(sum / samples.length);
-}
-
-function sendAudioForAnalysis() {
-  if (isProcessing || audioBuffer.length === 0 || !ws || ws.readyState !== WebSocket.OPEN) {
-    console.log('[SEND] Cannot send - isProcessing:', isProcessing, 'bufferLength:', audioBuffer.length, 'wsReady:', ws && ws.readyState === WebSocket.OPEN);
-    return;
-  }
-  
-  if (!setupComplete) {
-    console.warn('[SEND] Setup not complete yet, waiting...');
-    return;
-  }
-  
-  if (!hasSpeech) {
-    console.log('[SEND] No speech detected in buffer, skipping analysis');
-    audioBuffer = [];
-    return;
-  }
-  
-  console.log('[SEND] Starting analysis - buffer chunks:', audioBuffer.length);
-  isProcessing = true;
-  updateStatus('Analyzing...');
-  
-  // Clear timers
-  if (silenceTimer) {
-    clearTimeout(silenceTimer);
-    silenceTimer = null;
-  }
-  if (maxDurationTimer) {
-    clearTimeout(maxDurationTimer);
-    maxDurationTimer = null;
-  }
-  
-  // Concatenate audio buffer
-  const totalLength = audioBuffer.reduce((acc, chunk) => acc + chunk.length, 0);
-  console.log('[SEND] Total audio samples:', totalLength, 'Duration:', (totalLength / SAMPLE_RATE).toFixed(2), 'seconds');
-  const fullAudio = new Int16Array(totalLength);
-  let offset = 0;
-  for (const chunk of audioBuffer) {
-    fullAudio.set(chunk, offset);
-    offset += chunk.length;
-  }
-  
-  // Clear buffer and reset speech flag
-  audioBuffer = [];
-  hasSpeech = false;
-  speechStartTime = 0;
-  consecutiveSpeechFrames = 0;
-  consecutiveSilenceFrames = 0;
-  
-  // Convert to base64 properly
-  const bytes = new Uint8Array(fullAudio.buffer);
-  
-  // Use a more reliable base64 encoding method
+  // Convert to base64
+  const bytes = new Uint8Array(pcm16.buffer);
   let binaryString = '';
   const chunkSize = 8192;
   for (let i = 0; i < bytes.length; i += chunkSize) {
@@ -316,9 +174,7 @@ function sendAudioForAnalysis() {
   }
   const base64Audio = btoa(binaryString);
   
-  console.log('[SEND] Base64 audio length:', base64Audio.length, 'Bytes:', bytes.length);
-  
-  // Send audio using realtimeInput
+  // Stream audio chunk immediately to Gemini
   const audioMessage = {
     realtimeInput: {
       mediaChunks: [{
@@ -327,39 +183,15 @@ function sendAudioForAnalysis() {
       }]
     }
   };
-  console.log('[SEND] Sending audio via realtimeInput...');
+  
   ws.send(JSON.stringify(audioMessage));
   
-  // Show processing state
-  emojiDisplay.textContent = '⏳';
-  descriptionDiv.textContent = 'Analyzing your speech...';
-  
-  // Wait a moment for audio to be processed, then send the prompt
-  setTimeout(() => {
-    const promptMessage = {
-      clientContent: {
-        turns: [{
-          role: 'user',
-          parts: [{
-            text: 'IMPORTANT: Respond ONLY with the analysis, do not ask questions or say you are ready.\n\nTranscribe what was said in the audio I just sent. Then analyze the tone and content in 1-2 concise sentences. Format your response EXACTLY as:\n\nTranscript: [what you heard]\n\nAnalysis: [tone and content description]\n\nEmoji: [single emoji that best represents the emotion/tone/sentiment]'
-          }]
-        }],
-        turnComplete: true
-      }
-    };
-    console.log('[SEND] Sending prompt...');
-    ws.send(JSON.stringify(promptMessage));
-  }, 100);
-  
-  // Set timeout in case we don't get a response
-  setTimeout(() => {
-    if (isProcessing) {
-      console.warn('[SEND] No response received after 30 seconds, resetting...');
-      isProcessing = false;
-      updateStatus('No response received. Try speaking again...');
-    }
-  }, 30000);
+  if (audioChunkCount % 50 === 0) {
+    console.log('[STREAM] Sent', audioChunkCount, 'audio chunks');
+  }
 }
+
+// Audio is now streamed continuously, no separate send function needed
 
 function handleGeminiResponse(data) {
   try {
@@ -380,15 +212,8 @@ function handleGeminiResponse(data) {
       
       // Update display to show ready for speech
       emojiDisplay.textContent = '🎤';
-      descriptionDiv.textContent = 'Waiting for Speech';
+      descriptionDiv.textContent = 'Speak naturally - streaming audio to Gemini';
       
-      return;
-    }
-    
-    // Also check for toolConfig which might be sent as setup confirmation
-    if (response.toolConfig || response.config) {
-      console.log('[RESPONSE] Config received (setup likely complete)');
-      setupComplete = true;
       return;
     }
     
@@ -396,100 +221,78 @@ function handleGeminiResponse(data) {
     if (response.error) {
       console.error('[RESPONSE] Error from server:', response.error);
       updateStatus('Error: ' + (response.error.message || JSON.stringify(response.error)));
-      isProcessing = false;
       accumulatedText = '';
       return;
     }
     
     // Check for server content (text response)
     if (response.serverContent) {
-      console.log('[RESPONSE] Server content received:', response.serverContent);
+      console.log('[RESPONSE] Server content received');
       
+      // Gemini detected speech and is responding
       if (response.serverContent.modelTurn) {
-        console.log('[RESPONSE] Model turn received');
+        if (!currentTurnActive) {
+          currentTurnActive = true;
+          emojiDisplay.textContent = '⏳';
+          descriptionDiv.textContent = 'Analyzing...';
+          console.log('[RESPONSE] Model turn started');
+        }
+        
         const parts = response.serverContent.modelTurn.parts;
         if (parts && parts.length > 0) {
-          // Accumulate text from this chunk
+          // Accumulate text from this streaming chunk
           for (const part of parts) {
             if (part.text) {
               accumulatedText += part.text;
             }
           }
-          console.log('[RESPONSE] Accumulated text so far:', accumulatedText);
         }
       }
       
-      // Check for turn complete - this signals end of streaming
+      // Check for turn complete - Gemini finished responding
       if (response.serverContent.turnComplete) {
         console.log('[RESPONSE] Turn complete - processing full response');
+        currentTurnActive = false;
         
         if (accumulatedText) {
-          // Filter out non-analysis responses (like "I'm ready" messages)
-          const lowerText = accumulatedText.toLowerCase();
-          const isActualAnalysis = 
-            accumulatedText.length > 20 && 
-            !lowerText.includes("i'm ready") && 
-            !lowerText.includes("please provide") &&
-            !lowerText.includes("waiting for") &&
-            !lowerText.includes("ready when you are") &&
-            !lowerText.includes("send the audio");
+          // Extract transcript from response
+          const transcript = extractTranscript(accumulatedText);
           
-          if (isActualAnalysis) {
-            // Extract transcript from response
-            const transcript = extractTranscript(accumulatedText);
+          // Extract analysis from response
+          const analysis = extractAnalysis(accumulatedText);
+          
+          // Extract emoji from response
+          const emoji = extractEmoji(accumulatedText);
+          
+          console.log('[RESPONSE] Extracted transcript:', transcript);
+          console.log('[RESPONSE] Extracted analysis:', analysis);
+          console.log('[RESPONSE] Extracted emoji:', emoji);
+          
+          // Add to transcript log with analysis
+          if (transcript && analysis) {
+            addToTranscriptLog(transcript, analysis);
             
-            // Extract analysis from response
-            const analysis = extractAnalysis(accumulatedText);
-            
-            // Extract emoji from response
-            const emoji = extractEmoji(accumulatedText);
-            
-            console.log('[RESPONSE] Extracted transcript:', transcript);
-            console.log('[RESPONSE] Extracted analysis:', analysis);
-            console.log('[RESPONSE] Extracted emoji:', emoji);
-            console.log('[RESPONSE] Full response text:', accumulatedText);
-            
-            // Add to transcript log with analysis
-            if (transcript) {
-              addToTranscriptLog(transcript, analysis);
-            }
-            
-            // Update UI with analysis only (not transcript)
+            // Update UI with analysis
             emojiDisplay.textContent = emoji;
-            descriptionDiv.textContent = analysis || 'Analysis not available';
-            
-            // Reset for next turn
-            accumulatedText = '';
-            isProcessing = false;
-            updateStatus('Ready. Start speaking...');
-          } else {
-            console.log('[RESPONSE] Skipping non-analysis response:', accumulatedText);
-            // Reset processing state immediately so we can continue
-            accumulatedText = '';
-            isProcessing = false;
-            // Reset display to recording state if we still have speech
-            if (hasSpeech) {
-              emojiDisplay.textContent = '🔴';
-              descriptionDiv.textContent = 'Recording';
-              updateStatus('Recording...');
-            } else {
-              emojiDisplay.textContent = '🎤';
-              descriptionDiv.textContent = 'Waiting for Speech';
-              updateStatus('Ready. Start speaking...');
-            }
+            descriptionDiv.textContent = analysis;
           }
-        } else {
-          // No text received, reset processing state
-          isProcessing = false;
-          updateStatus('Ready. Start speaking...');
+          
+          // Reset for next turn
+          accumulatedText = '';
         }
+        
+        updateStatus('Streaming audio...');
+      }
+      
+      // Check for user turn (when Gemini detects we're speaking)
+      if (response.serverContent.interrupted) {
+        console.log('[RESPONSE] User started speaking - Gemini interrupted');
       }
     }
   } catch (error) {
     console.error('[RESPONSE] Error parsing response:', error, 'Raw data:', data);
     accumulatedText = '';
-    isProcessing = false;
-    updateStatus('Ready. Start speaking...');
+    currentTurnActive = false;
   }
 }
 
@@ -603,28 +406,13 @@ function disconnect() {
     ws = null;
   }
   
-  // Clear timers
-  if (silenceTimer) {
-    clearTimeout(silenceTimer);
-    silenceTimer = null;
-  }
-  if (maxDurationTimer) {
-    clearTimeout(maxDurationTimer);
-    maxDurationTimer = null;
-  }
-  
   // Reset state
   isRecording = false;
-  isProcessing = false;
-  audioBuffer = [];
   setupComplete = false;
-  hasSpeech = false;
   audioChunkCount = 0;
   accumulatedText = '';
   transcriptHistory = [];
-  speechStartTime = 0;
-  consecutiveSpeechFrames = 0;
-  consecutiveSilenceFrames = 0;
+  currentTurnActive = false;
   
   // Reset UI
   updateUI(false);
