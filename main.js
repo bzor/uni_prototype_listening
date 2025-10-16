@@ -1,3 +1,5 @@
+console.log("[V0.2]");
+
 // State
 let ws = null;
 let audioContext = null;
