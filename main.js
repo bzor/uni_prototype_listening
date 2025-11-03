@@ -1,19 +1,19 @@
 console.log("[V0.2]");
 
 // Import modules
-import { UIManager } from './ui.js';
-import { GeminiLiveManager } from './gemini-live.js';
+import { UIDisplay } from './ui.js';
+import { Mic } from './mic.js';
 
 // Initialize modules
-const uiManager = new UIManager();
-const geminiManager = new GeminiLiveManager(uiManager);
+const uiDisplay = new UIDisplay();
+const geminiAudio = new Mic(uiDisplay);
 
 // Set up event handlers
-uiManager.onConnectRequested = async (apiKey) => {
-	uiManager.updateStatus('Connecting to Gemini...');
-	await geminiManager.connect(apiKey);
+uiDisplay.onConnectRequested = async (apiKey) => {
+	uiDisplay.updateStatus('Connecting to Gemini...');
+	await geminiAudio.connect(apiKey);
 };
 
-uiManager.onDisconnectRequested = () => {
-	geminiManager.disconnect();
+uiDisplay.onDisconnectRequested = () => {
+	geminiAudio.disconnect();
 };

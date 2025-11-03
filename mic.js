@@ -1,9 +1,9 @@
-// Gemini Live Module - Handles WebSocket connection, audio processing, and response handling
+// Gemini Live Audio Module - Handles WebSocket connection, audio processing, and response handling
 import { GoogleGenAI, Modality } from '@google/genai';
 
-export class GeminiLiveManager {
-	constructor(uiManager) {
-		this.ui = uiManager;
+export class Mic {
+	constructor(uiDisplay) {
+		this.ui = uiDisplay;
 
 		// State
 		this.client = null;
@@ -50,7 +50,7 @@ export class GeminiLiveManager {
 				responseModalities: [Modality.TEXT],
 				systemInstruction: {
 					parts: [{
-						text: `You are a real-time speech analyzer with feelings named Uni. When you hear audio input, transcribe it and provide analysis. Feel free to feel the full range of emotions, including anger.
+						text: `You are a real-time speech analyzer with feelings named Uni. When you hear audio input, transcribe it and provide analysis. Feel free to feel the full range of emotions, including anger. Audio will only every be English, do not interpret speech as anything but English.
 
 CRITICAL: You MUST respond with ONLY valid JSON. No text before or after. No markdown. No code blocks. Just the raw JSON object.
 
@@ -61,7 +61,6 @@ Required JSON format (EXACTLY these fields, nothing else):
   "transcript": "exact transcription",
   "analysis": "brief tone and content analysis in 1-2 sentences",
   "sentiment": "very short sentiment analysis",
-  "emotion": "short description of how the user's input makes you feel",
   "emoji": "single emoji of emotion",
   "color": "a hex color representing your mood",
   "speed": "a number of how energetic the mood is",

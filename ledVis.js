@@ -63,8 +63,8 @@ export class LEDVisualizer {
 		this.canvas.height = this.height;
 
 		const dpr = window.devicePixelRatio || 1;
-		this.canvas.style.width = Math.floor(this.width * 0.5) + 'px';
-		this.canvas.style.height = Math.floor(this.height * 0.5) + 'px';
+		//this.canvas.style.width = Math.floor(this.width * 0.5) + 'px';
+		//this.canvas.style.height = Math.floor(this.height * 0.5) + 'px';
 	}
 
 	start() {
@@ -172,7 +172,7 @@ export class LEDVisualizer {
 			console.log(`[LED] Emoting - mappedSpeed: ${mappedSpeed}, mappedSmooth: ${mappedSmooth}`);
 			
 			gsap.to(this, { 
-				duration: 1, 
+				duration: 0.8, 
 				speed: mappedSpeed, 
 				offset: mix(0, 0.1, 1.0 - mappedSmooth), 
 				ease: "quad.inOut", 
@@ -195,15 +195,15 @@ export class LEDVisualizer {
 					console.log(`[LED] Color1 (dark):`, color1Dark);
 					console.log(`[LED] Color2 (light):`, color2Light);
 					
-					gsap.to(this.color1, { duration: 3, color: color1Dark, ease: "quad.inOut", overwrite: true});
-					gsap.to(this.color2, { duration: 3, color: color2Light, ease: "quad.inOut", overwrite: true});
+					gsap.to(this.color1, { duration: 0.8, color: color1Dark, ease: "quad.inOut", overwrite: true});
+					gsap.to(this.color2, { duration: 0.8, color: color2Light, ease: "quad.inOut", overwrite: true});
 					
 					console.log(`[LED] GSAP animations started for color1 and color2`);
 				} catch (error) {
 					console.error(`[LED] Error processing color:`, error, `color value:`, color);
 					// Fallback to default colors
-					gsap.to(this.color1, { duration: 3, color: hexToRgba("#FF00FF"), ease: "quad.inOut", overwrite: true});
-					gsap.to(this.color2, { duration: 3, color: hexToRgba("#00FFFF"), ease: "quad.inOut", overwrite: true});
+					gsap.to(this.color1, { duration: 0.8, color: hexToRgba("#FF00FF"), ease: "quad.inOut", overwrite: true});
+					gsap.to(this.color2, { duration: 0.8, color: hexToRgba("#00FFFF"), ease: "quad.inOut", overwrite: true});
 				}
 			} else {
 				console.log(`[LED] No color provided, using defaults`);

@@ -15,6 +15,7 @@ body {
 .container {
 	display: flex;
 	height: 100vh;
+	position: relative;
 }
 
 .left-panel {
@@ -30,11 +31,7 @@ body {
 
 .right-panel {
 	padding: 2rem;
-	display: flex;
-	flex-direction: column;
-	align-items: center;
-	justify-content: center;
-	gap: 2rem;
+	position: relative;
 	overflow: hidden
 }
 
@@ -121,14 +118,17 @@ button {
 	position: absolute;
 	left: 50%;
 	top: 50%;
+	width: 40px;
+	height: 40px;
 	transform: translate(-50%, -50%);
 	font-size: 1rem;
 	line-height: 1;
-	text-align: left;
+	text-align: center;
 	background-color: #1a1a1a;
 	border-radius: 120px;
 	box-shadow: #0a0a0a 10px 10px;
 	padding: 8px;
+	padding-top: 12px;
 }
 
 .description {
@@ -204,7 +204,8 @@ a {
 
 .led-visualizer {
 	position: relative;
-	margin-top: 2rem;
+	width: 800px;
+	height: 800px;
 	text-align: center;
 }
 
@@ -215,6 +216,8 @@ a {
 }
 
 #ledCanvas {
+	width: 100%;
+	height: 100%;
 	border: 1px solid #404040;
 	border-radius: 4px;
 	background: #0a0a0a;

@@ -2,7 +2,7 @@
 import { LEDVisualizer } from './ledVis.js';
 import { gsap } from "gsap";
 
-export class UIManager {
+export class UIDisplay {
 	constructor() {
 		// DOM elements
 		this.apiKeyInput = document.getElementById('apiKey');
